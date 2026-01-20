@@ -1,199 +1,201 @@
 #!/usr/bin/env python3
 
-import os
-import sys
+from pathlib import Path
+from typing import Literal
 
-class ParameterFiles():
+ResolutionType = Literal['LOW', 'HIGH']
+
+class ParameterFiles:
+    """
+    Generates parameter (.par) files for CIAOLoop.
+
+    Handles configuration for Ion Fraction maps (ib) and
+    Heating & Cooling maps (hc)
     """
 
-    Parameter files for CIAOLoop using Cloudy C13.0
-    Ion fractions for photoionisation and radiative heating & cooling
+    def __init__(
+        self,
+        cloudy_path: str | Path,
+        run_name: str,
+        elements: str,
+        redshift: str = '0.0000e+00',
+        resolution: ResolutionType = 'LOW'
+    ) -> None:
+        """
+        Initialise the parameter generator.
 
+        Parameters
+        ----------
+        cloudy_path : str | Path
+            Path to the Cloudy executable.
+        run_name : str
+            Name for the current CIAOLoop run.
+        elements : str
+            String of elements for ion fraction calculation (e.g., 'H C N O').
+        resolution : {'LOW', 'HIGH'}, optional
+            LOW: 81 log T points, 27 log hden points (coarse grid).
+            HIGH: 321 log T points, 105 log hden points (fine grid).
+        """
+        self.cloudy_path = str(cloudy_path)
+        self.run_name = run_name
+        self.elements = elements
+        self.redshift = redshift
 
-    **Parameters**
+        self.root_dir = Path.cwd()
 
-    :cloudypath: string
+        match resolution:
+            case 'LOW':
+                self.tpoints = 81
+                self.hden_step = 0.5
+            case 'HIGH':
+                self.tpoints = 321
+                self.hden_step = 0.125
+            case _:
+                raise ValueError(f'Resolution must be "LOW" or "HIGH". Got {resolution}.')
 
-        Path to Cloudy C13.0 executable
+    def _get_header(self, output_subdir: str, run_mode: Literal[1, 3]) -> list[str]:
+        """
+        Generate the header lines shared by both parameter files.
 
-    :run_name: string
+        Parameters
+        ----------
+        output_subdit : str
+            Output directory for selected mode.
+        run_mode : {1, 3}
+            Run (1) Heating & Cooling map or (3) Ion Fraction map.
 
-        Name for the current CIAOLoop run
+        Returns
+        -------
+        list[str]
+            Header of parameter file.
+        """
+        outdir_path = self.root_dir / output_subdir
 
-    :elements: string
+        return [
+            "#####################################################",
+            "################## RUN  PARAMETERS ##################",
+            "",
+            "# path to CLOUDY executable",
+            f"cloudyExe              = {self.cloudy_path}",
+            "",
+            "# save raw output from CLOUDY",
+            "saveCloudyOutputFiles   = 0",
+            "",
+            "# exit if CLOUDY crashes",
+            "exitOnCrash             = 1",
+            "",
+            "# run name",
+            f"outputFilePrefix       = {self.run_name}",
+            "",
+            "# output path",
+            f"outputDir              = {outdir_path}",
+            "",
+            "# index of first run",
+            "runStartIndex           = 1",
+            "",
+            "# TEST",
+            "test                    = 0",
+            "",
+            "# run mode",
+            f"cloudyRunMode          = {run_mode}",
+            ""
+        ]
 
-        Elements for calculation of ion fractions
+    def _get_loops(self, is_ib: bool) -> list[str]:
+        """
+        Generate the loop commands section.
 
-    :z: string
+        Parameters
+        ----------
+        is_ib : bool
+            Add a parameter for Ion Fraction maps.
+        """
+        sed_pattern = self.root_dir / f"{self.run_name}_z*.out"
 
-        Redshift
-
-    :resolution: string, LOW or HIGH
-
-        LOW: 81 log T points, 27 log hden points
-        HIGH: 321 log T points, 105 log hden points
-
-    """
-
-    def __init__(self, cloudypath, run_name, elements, z, resolution='LOW'):
-
-        self.cloudypath = cloudypath
-        self.run_name   = run_name
-        self.elements   = elements
-        self.z          = z
-
-        if resolution != 'LOW' and resolution != 'HIGH':
-            raise Exception('Set resolution to either LOW or HIGH')
-
-        if resolution == 'LOW':
-            T_res    = 81
-            hden_res = 0.5
+        if is_ib:
+            init_cmd = f'loop [init "{sed_pattern}"] {self.redshift} 0.0001e+00'
         else:
-            T_res    = 321
-            hden_res = 0.125
+            init_cmd = f'loop [init "{sed_pattern}"] {self.redshift}'
 
-        self.resolution = [T_res, hden_res]
-        self.path = os.getcwd()
+        return [
+            "#####################################################",
+            "####################### LOOPS #######################",
+            "",
+            "command stop zone 1",
+            "",
+            "command iterate to convergence",
+            "",
+            f"loop [hden] (-9;4;{self.hden_step})",
+            "",
+            init_cmd
+        ]
 
-    def getIonFractions(self):
+    def hc_parfile(self) -> Path:
         """
-
-        Get CIAOLoop parameter file for ion fractions
-
+        Generate and write the CIAOLoop parameter file for heating & cooling.
         """
-        file = self.run_name + '_ib.par'
+        filename = f'{self.run_name}_hc.par'
+        file_path = self.root_dir / filename
 
-        stdout = sys.stdout
-        with open(file, 'w') as f:
-            sys.stdout = f
-            print('#####################################################')
-            print('########## ION FRACTION MAP PARAMETER FILE ##########')
-            print('#####################################################')
-            print()
-            print('#####################################################')
-            print('################## RUN  PARAMETERS ##################')
-            print()
-            print('# path to CLOUDY executable')
-            print('cloudyExe               = ' + self.cloudypath)
-            print()
-            print('# save raw output from CLOUDY')
-            print('saveCloudyOutputFiles   = 0')
-            print()
-            print('# exit if CLOUDY crashes')
-            print('exitOnCrash             = 1')
-            print()
-            print('# run name')
-            print('outputFilePrefix        = ' + self.run_name)
-            print()
-            print('# output path')
-            print('outputDir               = ' + self.path + '/ib')
-            print()
-            print('# index of first run')
-            print('runStartIndex           = 1')
-            print()
-            print('# TEST')
-            print('test                    = 0')
-            print()
-            print('# run mode')
-            print('cloudyRunMode           = 3')
-            print()
-            print('#####################################################')
-            print('############ ION FRACTION MAP PARAMETERS ############')
-            print()
-            print('# min T')
-            print('coolingMapTmin = 1e1')
-            print()
-            print('# max T')
-            print('coolingMapTmax = 1e9')
-            print()
-            print('# T resolution (log points)')
-            print('coolingMapTpoints = ' + str(self.resolution[0]))
-            print()
-            print('# elements')
-            print('ionFractionElements = ' + self.elements)
-            print()
-            print('#####################################################')
-            print('####################### LOOPS #######################')
-            print()
-            print('command stop zone 1')
-            print()
-            print('command iterate to convergence')
-            print()
-            print('loop [hden] (-9;4;' + str(self.resolution[1]) + ')')
-            print()
-            print('loop [init "' + self.path + '/' + self.run_name + '_z*.out"] ' + self.z + ' 0.0001e+00')
+        lines = self._get_header(output_subdir="hc", run_mode=1)
 
-            sys.stdout = stdout
+        lines.extend([
+            "#####################################################",
+            "########## HEATING & COOLING MAP PARAMETERS #########",
+            "",
+            "# min T",
+            "coolingMapTmin = 1e1",
+            "",
+            "# max T",
+            "coolingMapTmax = 1e9",
+            "",
+            "# T resolution (log points)",
+            f"coolingMapTpoints = {self.tpoints}",
+            "",
+            "# scale factor (1 - n_H^2, 2 - n_H * n_e)",
+            "coolingScaleFactor = 1",
+            ""
+        ])
 
-    def getHeatingCooling(self):
-        """
+        lines.extend(self._get_loops(is_ib=False))
 
-        Get CIAOLoop parameter file for radiative heating & cooling
-
-        """
-
-        file = self.run_name + '_hc.par'
-
-        stdout = sys.stdout
-        with open(file, 'w') as f:
-            sys.stdout = f
-            print('#####################################################')
-            print('######## HEATING & COOLING MAP PARAMETER FILE #######')
-            print('#####################################################')
-            print()
-            print('#####################################################')
-            print('################## RUN  PARAMETERS ##################')
-            print()
-            print('# path to CLOUDY executable')
-            print('cloudyExe               = ' + self.cloudypath)
-            print()
-            print('# save raw output from CLOUDY')
-            print('saveCloudyOutputFiles   = 0')
-            print()
-            print('# exit if CLOUDY crashes')
-            print('exitOnCrash             = 1')
-            print()
-            print('# run name')
-            print('outputFilePrefix        = ' + self.run_name)
-            print()
-            print('# output path')
-            print('outputDir               = ' + self.path + '/hc')
-            print()
-            print('# index of first run')
-            print('runStartIndex           = 1')
-            print()
-            print('# TEST')
-            print('test                    = 0')
-            print()
-            print('# run mode')
-            print('cloudyRunMode           = 1')
-            print()
-            print('#####################################################')
-            print('########## HEATING & COOLING MAP PARAMETERS #########')
-            print()
-            print('# min T')
-            print('coolingMapTmin = 1e1')
-            print()
-            print('# max T')
-            print('coolingMapTmax = 1e9')
-            print()
-            print('# T resolution (log points)')
-            print('coolingMapTpoints = ' + str(self.resolution[0]))
-            print()
-            print('# scale factor')
-            print('# 1 - n_H^2')
-            print('# 2 - n_H * n_e')
-            print('coolingScaleFactor = 1')
-            print()
-            print('#####################################################')
-            print('####################### LOOPS #######################')
-            print()
-            print('command stop zone 1')
-            print()
-            print('command iterate to convergence')
-            print()
-            print('loop [hden] (-9;4;' + str(self.resolution[1]) + ')')
-            print()
-            print('loop [init "' + self.path + '/' + self.run_name + '_z*.out"] ' + self.z)
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(lines))
+            f.write('\n')
             
-            sys.stdout = stdout
+        return file_path
+
+    def ib_parfile(self) -> Path:
+        """
+        Generate and write the CIAOLoop parameter file for ion fractions.
+        """
+        filename = f'{self.run_name}_ib.par'
+        file_path = self.root_dir / filename
+
+        lines = self._get_header(output_subdir='ib', run_mode=3)
+
+        lines.extend([
+            "#####################################################",
+            "############ ION FRACTION MAP PARAMETERS ############",
+            "",
+            "# min T",
+            "coolingMapTmin = 1e1",
+            "",
+            "# max T",
+            "coolingMapTmax = 1e9",
+            "",
+            "# T resolution (log points)",
+            f"coolingMapTpoints = {self.tpoints}",
+            "",
+            "# elements",
+            f"ionFractionElements = {self.elements}",
+            ""
+        ])
+
+        lines.extend(self._get_loops(is_ib=True))
+
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(lines))
+            f.write('\n')
+
+        return file_path
